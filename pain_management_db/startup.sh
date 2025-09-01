@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Minimal PostgreSQL startup script with full paths
+# Minimal PostgreSQL startup script with full paths + schema bootstrap
 DB_NAME="myapp"
 DB_USER="appuser"
 DB_PASSWORD="dbuser123"
@@ -30,6 +30,17 @@ if sudo -u postgres ${PG_BIN}/pg_isready -p ${DB_PORT} > /dev/null 2>&1; then
     fi
     
     echo ""
+    echo "Applying schema on existing server (idempotent)..."
+    if [ -f "schema.sql" ]; then
+        sudo -u postgres ${PG_BIN}/psql -p ${DB_PORT} -d ${DB_NAME} -f schema.sql || {
+          echo "Failed to apply schema.sql"; exit 1;
+        }
+    fi
+    if [ -f "seed.sql" ]; then
+        echo "Applying optional seed data..."
+        sudo -u postgres ${PG_BIN}/psql -p ${DB_PORT} -d ${DB_NAME} -f seed.sql || echo "Warning: seed.sql failed (continuing)"
+    fi
+
     echo "Script stopped - server already running."
     exit 0
 fi
@@ -42,6 +53,16 @@ if pgrep -f "postgres.*-p ${DB_PORT}" > /dev/null 2>&1; then
     # Try to connect and verify the database exists
     if sudo -u postgres ${PG_BIN}/psql -p ${DB_PORT} -d ${DB_NAME} -c '\q' 2>/dev/null; then
         echo "Database ${DB_NAME} is accessible."
+        echo "Applying schema on existing server (idempotent)..."
+        if [ -f "schema.sql" ]; then
+            sudo -u postgres ${PG_BIN}/psql -p ${DB_PORT} -d ${DB_NAME} -f schema.sql || {
+              echo "Failed to apply schema.sql"; exit 1;
+            }
+        fi
+        if [ -f "seed.sql" ]; then
+            echo "Applying optional seed data..."
+            sudo -u postgres ${PG_BIN}/psql -p ${DB_PORT} -d ${DB_NAME} -f seed.sql || echo "Warning: seed.sql failed (continuing)"
+        fi
         echo "Script stopped - server already running."
         exit 0
     fi
@@ -106,10 +127,6 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ${DB_USER};
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO ${DB_USER};
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TYPES TO ${DB_USER};
 
--- If you want the user to be able to create objects without restrictions,
--- you can make them the owner of the public schema (optional but effective)
--- ALTER SCHEMA public OWNER TO ${DB_USER};
-
 -- Alternative: Grant all privileges on schema public to the user
 GRANT ALL ON SCHEMA public TO ${DB_USER};
 
@@ -128,6 +145,20 @@ GRANT CREATE ON SCHEMA public TO ${DB_USER};
 -- Show current permissions for debugging
 \dn+ public
 EOF
+
+# Apply schema and seed files using postgres superuser to avoid permission issues during bootstrap
+if [ -f "schema.sql" ]; then
+  echo "Applying schema.sql to ${DB_NAME}..."
+  sudo -u postgres ${PG_BIN}/psql -p ${DB_PORT} -d ${DB_NAME} -f schema.sql || {
+    echo "Failed to apply schema.sql"; exit 1;
+  }
+  echo "Schema applied."
+fi
+
+if [ -f "seed.sql" ]; then
+  echo "Applying optional seed.sql to ${DB_NAME}..."
+  sudo -u postgres ${PG_BIN}/psql -p ${DB_PORT} -d ${DB_NAME} -f seed.sql || echo "Warning: seed.sql failed (continuing)"
+fi
 
 # Save connection command to a file
 echo "psql postgresql://${DB_USER}:${DB_PASSWORD}@localhost:${DB_PORT}/${DB_NAME}" > db_connection.txt
